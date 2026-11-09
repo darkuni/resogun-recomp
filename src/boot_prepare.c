@@ -616,7 +616,7 @@ static int link_modules(const Module *main, const char *game, const char *const 
     if (!r && !procparam) r = fail("eboot.bin without process parameters");
     if (!r) {
         Buf f = {0};
-        static const char magic[8] = "G3PROBE5";
+        static const char magic[] = "G3PROBE5";
         r = buf_put(&f, magic, 8) || buf_q(&f, p->image.size) || buf_q(&f, p->entry) || buf_q(&f, p->nsegs)
             || buf_q(&f, p->nrelocs) || buf_q(&f, p->nnames) || buf_q(&f, p->flags) || buf_q(&f, procparam->vaddr);
         for (int i = 0; !r && i < 4; ++i) r = buf_q(&f, tls_values[i]);

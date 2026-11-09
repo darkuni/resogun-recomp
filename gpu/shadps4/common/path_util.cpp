@@ -111,7 +111,10 @@ static auto UserPaths = [] {
     std::unordered_map<PathType, fs::path> paths;
 
     const auto create_path = [&](PathType shad_path, const fs::path& new_path) {
-        std::filesystem::create_directory(new_path);
+        // resogun: create missing parents and never abort before main (a bare HOME has no
+        // .local/share yet).
+        std::error_code ec;
+        std::filesystem::create_directories(new_path, ec);
         paths.insert_or_assign(shad_path, new_path);
     };
 
