@@ -81,7 +81,9 @@ static int reopen_log(const char *path) {
     wchar_t w[4096];
     if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 4096)) return -1;
     if (!_wfreopen(w, L"a", stdout)) return -1;
-    _dup2(_fileno(stdout), _fileno(stderr));
+    /* A GUI program starts without a standard error stream (no descriptor 2 to _dup2 onto):
+     * stderr gets its own append-mode stream on the same file. */
+    _wfreopen(w, L"a", stderr);
     SetStdHandle(STD_OUTPUT_HANDLE, (HANDLE)_get_osfhandle(_fileno(stdout)));
     SetStdHandle(STD_ERROR_HANDLE, (HANDLE)_get_osfhandle(_fileno(stderr)));
 #else
@@ -546,6 +548,10 @@ int bootstrap(int *argc, char ***argv) {
     set_env("GOW3_ENGINE_FPS", "60", 0);
     set_env("GOW3_UPSCALER", "none", 0);
     set_env("GOW3_READBACK_LINEAR", "1", 0);
+    /* RESOGUN's frames are light: the two-stage draw pipeline (a second thread recording draws)
+     * is off. With it the GPU scheduler was used from both threads at once (an endRendering
+     * with none open, flicker, NVIDIA driver faults). GOW3_DRAW_PIPE=1 turns it back on. */
+    set_env("GOW3_DRAW_PIPE", "0", 0);
 #ifndef _WIN32
     set_env("SDL_APP_ID", "resogun", 0);
 #endif

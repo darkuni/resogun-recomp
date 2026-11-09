@@ -206,3 +206,14 @@ Changes: on NVIDIA the rasterizer records on the GPU thread (`GOW3_VK_RECORD_THR
 recording thread); the scheduler tracks, on the recording side, whether a `beginRendering` is open
 and skips an `endRendering` with none open (logged once). The watcher's log is shared in append
 mode: the game process opens `last_run.log` itself (the previous build lost the game's output).
+
+## Fourth Windows test: flicker, then a fault on the draw recording thread
+
+With recording on the GPU thread the log showed "endRendering without an open rendering skipped",
+the picture flickered, and after a longer run NVIDIA's driver faulted again (write to 0x10,
+`nvoglv64.dll+0xdc1c0c`), this time on the two-stage draw pipeline's stage B thread
+(`DrawPipe::Run` -> rasterizer draw -> dynamic state). An unmatched endRendering means the scheduler
+was changed from two threads at once: stage A (GPU command thread) touched it on a path that does
+not drain stage B. RESOGUN now starts with the draw pipeline off (`GOW3_DRAW_PIPE=0`; =1 turns it
+on), so one thread records. The fault report was also missing from the log: a GUI program has no
+standard error descriptor to `_dup2` onto, so stderr now gets its own append-mode stream.
