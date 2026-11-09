@@ -129,3 +129,28 @@ wipeout_pc. Every other test passes.
   ([#413](https://github.com/shadps4-compatibility/shadps4-game-compatibility/issues/413)).
 
 So the shadPS4 video core already draws this game; the work here is the runtime side.
+
+## Intro video crash (AvPlayer)
+
+About 13 minutes into the software-rendered boot, right after it loads libSceAvPlayer (system
+module 0xa5) for the intro video, the game ended with `std::system_error: Resource deadlock
+avoided`. Under gdb (`catch throw system_error`) the throw is on shadPS4's AvPlayer controller
+thread:
+
+    std::shared_mutex::lock_shared            <- EDEADLK: this thread holds it exclusively
+    AvPlayerState::GetStreamCount             avplayer_state.cpp
+    AvPlayer::GetStreamCount                  avplayer_impl.cpp
+    <RESOGUN's AvPlayer event callback>       guest code
+
+RESOGUN starts playback from its event callback (on StateReady, so on the controller thread).
+`AvPlayerState::Start()` held `m_source_mutex` exclusively while it sent StatePlay, the game's
+callback asked for the stream count, and the second lock on the same thread threw. `Stop()`,
+`Pause()` and `Resume()` had the same shape with a shared lock (a callback that starts playback
+from one of those events would throw the same way). All four now release the lock before the event
+goes to the game, as `UpdateEndOfFileState()` already did. Upstream shadPS4 still has the same
+`Start()`. The Windows compatibility report for this game crashes at the same point (after the
+splash screen, AvPlayer loaded); whether this is that crash is untested.
+
+With the fix the intro video plays and the game reaches its title screen ("Press ✕ to start")
+with no errors, still on lavapipe (about 15 minutes of software rendering to get there).
+

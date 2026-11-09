@@ -6,9 +6,9 @@ game's original x86-64 code runs directly on the PC's processor, a runtime repla
 system libraries, and the graphics are translated to Vulkan by the shadPS4 video core. There is
 no CPU emulator.
 
-> **Status: boots to the intro screens. Not playable yet.** Every PS4 function RESOGUN imports
-> is answered; on Linux the game starts and draws its boot screens. Not yet tested on a real
-> GPU, or on Windows. Details: [docs/resogun.md](docs/resogun.md#imports-filled-in-first-boot).
+> **Status: reaches the title screen. Not playable yet.** Every PS4 function RESOGUN imports is
+> answered; on Linux the game boots, plays its intro video and shows "Press ✕ to start". Not yet
+> tested on a real GPU, or on Windows. Details: [docs/resogun.md](docs/resogun.md).
 > Analysis notes: [docs/resogun.md](docs/resogun.md).
 
 No game files are included. You need your own dump of the game.
