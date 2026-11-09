@@ -17,6 +17,8 @@
 #include "video_core/renderer_vulkan/vk_wait_diagnostics.h"
 #include "common/assert.h"
 #include "common/debug.h"
+#include <atomic>
+#include <cstdio>
 #include "common/thread.h"
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -31,6 +33,14 @@ Scheduler::Scheduler(const Instance& instance, bool threaded_recording)
     : instance{instance}, work_semaphore{instance}, command_pool{instance, &work_semaphore} {
     // gow3: GOW3_VK_RECORD_THREAD=0 records on the calling thread.
     const char* env = std::getenv("GOW3_VK_RECORD_THREAD");
+    // resogun: NVIDIA's driver faulted in vkCmdEndRendering on the recording thread (RTX 4070 Ti,
+    // driver 621.14, twice, read of 0x130): there commands are recorded on the calling thread
+    // unless GOW3_VK_RECORD_THREAD=1.
+    if (threaded_recording && !env && instance.GetVendorID() == 0x10DE) {
+        threaded_recording = false;
+        std::printf("GPU: commands recorded on the GPU thread (NVIDIA; GOW3_VK_RECORD_THREAD=1 "
+                    "uses a recording thread)\n");
+    }
     if (threaded_recording && !(env && env[0] == '0')) {
         record_chunk = AcquireChunk();
         recorder_thread = std::jthread(std::bind_front(&Scheduler::RecorderThread, this));
@@ -139,10 +149,11 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
             RecordFullBarrier(current_cmdbuf);
         }
         current_cmdbuf.beginRendering(rendering_info);
+        rendering_recorded = true;
         return;
     }
     // The attachment infos live on this stack frame: the recorded closure keeps copies.
-    Record([info = rendering_info, color_attachments, depth_attachment,
+    Record([this, info = rendering_info, color_attachments, depth_attachment,
             stencil_attachment](vk::CommandBuffer cmdbuf) mutable {
         info.pColorAttachments = color_attachments.data();
         if (info.pDepthAttachment) {
@@ -155,6 +166,7 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
             RecordFullBarrier(cmdbuf);
         }
         cmdbuf.beginRendering(info);
+        rendering_recorded = true;
     });
 }
 
@@ -163,7 +175,17 @@ void Scheduler::EndRendering() {
         return;
     }
     is_rendering = false;
-    Record([](vk::CommandBuffer cmdbuf) {
+    Record([this](vk::CommandBuffer cmdbuf) {
+        // resogun: an endRendering with no rendering open crashes NVIDIA's driver; skipped and
+        // reported once (a scheduler used from two threads would do this).
+        if (!rendering_recorded) {
+            static std::atomic<bool> reported{false};
+            if (!reported.exchange(true)) {
+                std::printf("GPU: endRendering without an open rendering skipped\n");
+            }
+            return;
+        }
+        rendering_recorded = false;
         cmdbuf.endRendering();
         if (FullBarriers()) {
             RecordFullBarrier(cmdbuf);
@@ -435,6 +457,7 @@ void Scheduler::AllocateWorkerCommandBuffers() {
     };
 
     current_cmdbuf = command_pool.Commit();
+    rendering_recorded = false;
     Check(current_cmdbuf.begin(begin_info));
 
     // Invalidate dynamic state so it gets applied to the new command buffer.

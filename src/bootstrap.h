@@ -11,3 +11,5 @@ int bootstrap_wanted(int argc, char **argv);
 int bootstrap(int *argc, char ***argv);
 /* This CPU cannot run the game: a message box naming the missing instruction sets. */
 void bootstrap_cpu_message(const char *missing, int fatal);
+/* The game process started by bootstrap() (Windows) writes to the same last_run.log. */
+void bootstrap_game_log(void);

@@ -193,3 +193,16 @@ corruption, or the driver ending the process). The game now runs in a child proc
 Windows Error Reporting events for it (faulting module, offset, exception code). A fault the port
 does see also writes `user/crash.dmp` (all threads), and the first exceptions raised in drivers and
 system libraries are logged as they happen.
+
+## The NVIDIA crash: vkCmdEndRendering on the recording thread
+
+The minidump from the third Windows test (`user/crash.dmp`) shows the fault (`nvoglv64.dll+0xe3b270`,
+read of 0x130, the same place as the first test) on the port's `gow3:VkRecorder` thread, inside
+`RecordChunk::TypedCommand<Scheduler::EndRendering()::$_0>::Execute`: the driver's
+`vkCmdEndRendering`. The "freshly started driver thread" reading of the first test was this thread
+(its stack holds only the libc++ thread start, `RecorderThread` and the command).
+
+Changes: on NVIDIA the rasterizer records on the GPU thread (`GOW3_VK_RECORD_THREAD=1` restores the
+recording thread); the scheduler tracks, on the recording side, whether a `beginRendering` is open
+and skips an `endRendering` with none open (logged once). The watcher's log is shared in append
+mode: the game process opens `last_run.log` itself (the previous build lost the game's output).

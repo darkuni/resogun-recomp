@@ -34,6 +34,7 @@ static const char *const MODULES[] = {"libc.prx", "libSceFios2.prx", NULL};
 
 static char exe_path[4096], base_dir[4096], game_dir[4096], out_dir[4096], user_dir[4096];
 
+static void set_env(const char *name, const char *value, int overwrite);
 static void message(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void message(const char *fmt, ...) {
     char text[2048];
@@ -73,23 +74,42 @@ static int in_base(char *out, size_t size, const char *name) {
 }
 
 /* ---------------------------------------------------------------- log */
-static void open_log(int append) {
-    char path[4096];
-    if (!boot_path(path, sizeof(path), "%s/last_run.log", user_dir)) return;
+/* The log is always written in append mode: the game process (watch_game) writes to the same
+ * file, each write at its end. */
+static int reopen_log(const char *path) {
 #ifdef _WIN32
     wchar_t w[4096];
-    if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 4096)) return;
-    if (!_wfreopen(w, append ? L"a" : L"w", stdout)) return;
+    if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 4096)) return -1;
+    if (!_wfreopen(w, L"a", stdout)) return -1;
     _dup2(_fileno(stdout), _fileno(stderr));
-    /* Child processes and GetStdHandle users (the restart) see the log too. */
     SetStdHandle(STD_OUTPUT_HANDLE, (HANDLE)_get_osfhandle(_fileno(stdout)));
     SetStdHandle(STD_ERROR_HANDLE, (HANDLE)_get_osfhandle(_fileno(stderr)));
 #else
-    if (!freopen(path, append ? "a" : "w", stdout)) return;
+    if (!freopen(path, "a", stdout)) return -1;
     dup2(fileno(stdout), fileno(stderr));
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+    return 0;
+}
+void bootstrap_game_log(void) {
+    const char *path = getenv("RESOGUN_LOG");
+    if (path && *path) reopen_log(path);
+}
+static void open_log(int append) {
+    char path[4096];
+    if (!boot_path(path, sizeof(path), "%s/last_run.log", user_dir)) return;
+    if (!append) {
+#ifdef _WIN32
+        wchar_t w[4096];
+        FILE *f = MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 4096) ? _wfopen(w, L"w") : NULL;
+#else
+        FILE *f = fopen(path, "w");
+#endif
+        if (f) fclose(f);
+    }
+    set_env("RESOGUN_LOG", path, 1);
+    if (reopen_log(path)) return;
     time_t now = time(NULL);
     char when[64];
     strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", localtime(&now));
@@ -441,11 +461,8 @@ static void watch_game(int argc, char **argv) {
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-    if (!CreateProcessW(exe, cmd, NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
+    /* The game opens last_run.log itself (RESOGUN_LOG, bootstrap_game_log). */
+    if (!CreateProcessW(exe, cmd, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
         fprintf(stderr, "Starting the game failed (error %lu)\n", GetLastError());
         message("RESOGUN could not start the game (error %lu).", GetLastError());
         ExitProcess(1);

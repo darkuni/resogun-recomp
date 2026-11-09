@@ -914,6 +914,7 @@ private:
     std::jthread priority_pending_ops_thread;
     RenderState render_state;
     bool is_rendering = false;
+    bool rendering_recorded = false; ///< resogun: a beginRendering is open in current_cmdbuf (recording side)
     // gow3: threaded recording
     std::unique_ptr<RecordChunk> record_chunk;
     std::vector<std::unique_ptr<RecordChunk>> full_chunks;

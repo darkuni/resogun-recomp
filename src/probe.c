@@ -1263,7 +1263,10 @@ int main(int argc, char **argv) {
         if (code) return code;
         bootstrapped = 1;
     }
-    if (getenv("RESOGUN_WATCHED")) bootstrapped = 1;  /* the game process bootstrap() started */
+    if (getenv("RESOGUN_WATCHED")) {  /* the game process bootstrap() started */
+        bootstrapped = 1;
+        bootstrap_game_log();
+    }
     int cpu_only = 0, strict_imports = 0, check_imports = 0;
     unsigned timeout_seconds = 10;
     const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *isa_file=NULL, *pause_menu=NULL;
