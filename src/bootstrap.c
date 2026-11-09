@@ -21,6 +21,7 @@
 #include <time.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <winevt.h>
 #include <io.h>
 #else
 #include <unistd.h>
@@ -316,6 +317,168 @@ static void wait_for_process(unsigned long pid) {
 #endif
 }
 
+#ifdef _WIN32
+/* ---------------------------------------------------------------- watching the game */
+/* The game runs in a child process (this program again, with the loader's arguments) so that an
+ * end no handler inside the game sees (a fast fail, a driver killing the process) is still
+ * recorded: the exit code, and Windows' own Application Error report for it, go to the log. */
+static void quote_arg(wchar_t *out, size_t cap, size_t *len, const char *arg) {
+    wchar_t w[4400];
+    if (!MultiByteToWideChar(CP_UTF8, 0, arg, -1, w, 4400)) w[0] = 0;
+    size_t n = *len;
+    if (n && n + 1 < cap) out[n++] = L' ';
+    if (n + 1 < cap) out[n++] = L'"';
+    for (const wchar_t *c = w; *c; ++c) {
+        size_t slashes = 0;
+        while (c[slashes] == L'\\') ++slashes;
+        if (slashes) {  /* backslashes are doubled only before a quote or the closing quote */
+            size_t times = (!c[slashes] || c[slashes] == L'"') ? 2 : 1;
+            for (size_t i = 0; i < slashes * times && n + 1 < cap; ++i) out[n++] = L'\\';
+            c += slashes - 1;
+            continue;
+        }
+        if (*c == L'"' && n + 1 < cap) out[n++] = L'\\';
+        if (n + 1 < cap) out[n++] = *c;
+    }
+    if (n + 1 < cap) out[n++] = L'"';
+    out[n] = 0;
+    *len = n;
+}
+static const char *exit_name(DWORD code) {
+    switch (code) {
+    case 3: return "crash, reported above";
+    case 0xC0000005: return "access violation";
+    case 0xC0000409: return "fast fail (stack buffer overrun or a failed security check)";
+    case 0xC0000374: return "heap corruption";
+    case 0xC00000FD: return "stack overflow";
+    case 0xC000001D: return "illegal instruction";
+    case 0xC0000142: return "a DLL failed to initialize";
+    case 0xC0000135: return "a DLL is missing";
+    case 0x40010004: return "ended from outside (debugger or Task Manager)";
+    case 0xE0000008: return "out of memory";
+    default: return "";
+    }
+}
+/* Windows' Application Error and Windows Error Reporting events for this program in the last
+ * two minutes (they name the faulting module, its offset and the exception code). */
+static int log_windows_report(void) {
+    typedef EVT_HANDLE (WINAPI *Query)(EVT_HANDLE, LPCWSTR, LPCWSTR, DWORD);
+    typedef BOOL (WINAPI *Next)(EVT_HANDLE, DWORD, EVT_HANDLE *, DWORD, DWORD, PDWORD);
+    typedef BOOL (WINAPI *Format)(EVT_HANDLE, EVT_HANDLE, DWORD, DWORD, PEVT_VARIANT, DWORD, DWORD, LPWSTR, PDWORD);
+    typedef EVT_HANDLE (WINAPI *Publisher)(EVT_HANDLE, LPCWSTR, LPCWSTR, LCID, DWORD);
+    typedef BOOL (WINAPI *Close)(EVT_HANDLE);
+    typedef BOOL (WINAPI *Render)(EVT_HANDLE, EVT_HANDLE, DWORD, DWORD, PVOID, PDWORD, PDWORD);
+    HMODULE m = LoadLibraryW(L"wevtapi.dll");
+    if (!m) return 0;
+    Query query = (Query)(void *)GetProcAddress(m, "EvtQuery");
+    Next next = (Next)(void *)GetProcAddress(m, "EvtNext");
+    Format format = (Format)(void *)GetProcAddress(m, "EvtFormatMessage");
+    Publisher publisher = (Publisher)(void *)GetProcAddress(m, "EvtOpenPublisherMetadata");
+    Close close = (Close)(void *)GetProcAddress(m, "EvtClose");
+    Render render = (Render)(void *)GetProcAddress(m, "EvtRender");
+    if (!query || !next || !format || !publisher || !close || !render) return 0;
+    const wchar_t *q = L"*[System[(Provider[@Name='Application Error'] or Provider[@Name='Windows Error Reporting'])"
+                       L" and TimeCreated[timediff(@SystemTime) <= 120000]]]";
+    EVT_HANDLE results = query(NULL, L"Application", q, EvtQueryChannelPath | EvtQueryReverseDirection);
+    if (!results) return 0;
+    int found = 0;
+    EVT_HANDLE events[8];
+    DWORD got = 0;
+    static wchar_t text[16384];
+    char utf8[32768];
+    while (next(results, 8, events, 2000, 0, &got) && got) {
+        for (DWORD i = 0; i < got; ++i) {
+            /* The provider name, for its message table. */
+            wchar_t name[128] = L"";
+            DWORD used = 0, props = 0;
+            static wchar_t xml[16384];
+            if (render(NULL, events[i], 1 /* EvtRenderEventXml */, sizeof(xml), xml, &used, &props)) {
+                const wchar_t *a = wcsstr(xml, L"Provider Name='");
+                if (a) {
+                    a += 15;
+                    size_t k = 0;
+                    while (a[k] && a[k] != L'\'' && k + 1 < 128) { name[k] = a[k]; ++k; }
+                    name[k] = 0;
+                }
+            }
+            /* Only reports about this program. */
+            if (!wcsstr(xml, L"resogun")) { close(events[i]); continue; }
+            EVT_HANDLE meta = name[0] ? publisher(NULL, name, NULL, 0, 0) : NULL;
+            DWORD n = 0;
+            if (meta && format(meta, events[i], 0, 0, NULL, 1 /* EvtFormatMessageEvent */, 16384, text, &n)) {
+                WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8, sizeof(utf8), NULL, NULL);
+                fprintf(stderr, "Windows report (%ls):\n%s\n", name, utf8);
+            } else {
+                WideCharToMultiByte(CP_UTF8, 0, xml, -1, utf8, sizeof(utf8), NULL, NULL);
+                fprintf(stderr, "Windows report:\n%s\n", utf8);
+            }
+            if (meta) close(meta);
+            close(events[i]);
+            ++found;
+        }
+    }
+    close(results);
+    return found;
+}
+static void watch_game(int argc, char **argv) {
+    static wchar_t cmd[32768];
+    wchar_t exe[4096];
+    size_t len = 0;
+    MultiByteToWideChar(CP_UTF8, 0, exe_path, -1, exe, 4096);
+    quote_arg(cmd, 32768, &len, exe_path);
+    for (int i = 1; i < argc; ++i) quote_arg(cmd, 32768, &len, argv[i]);
+    set_env("RESOGUN_WATCHED", "1", 1);
+    /* The game ends with this program (closed from Task Manager); what it starts (the restart)
+     * does not. */
+    HANDLE job = CreateJobObjectW(NULL, NULL);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
+        memset(&limits, 0, sizeof(limits));
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+    }
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    if (!CreateProcessW(exe, cmd, NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
+        fprintf(stderr, "Starting the game failed (error %lu)\n", GetLastError());
+        message("RESOGUN could not start the game (error %lu).", GetLastError());
+        ExitProcess(1);
+    }
+    if (job) AssignProcessToJobObject(job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    if (code == 0) ExitProcess(0);
+    const char *what = exit_name(code);
+    fprintf(stderr, "The game ended with code 0x%08lx%s%s%s\n", code, *what ? " (" : "", what, *what ? ")" : "");
+    if (code == 3 || code >= 0x80000000u) {
+        /* Windows writes its report a moment after the process ends. */
+        int found = 0;
+        for (int i = 0; i < 20 && !found; ++i) {
+            Sleep(500);
+            found = log_windows_report();
+        }
+        if (!found) fprintf(stderr, "Windows wrote no Application Error report for it.\n");
+        fflush(NULL);
+        wchar_t log[4200];
+        char where[4300];
+        snprintf(where, sizeof(where), "RESOGUN stopped unexpectedly.\n\nThe details are in\n%s\\last_run.log", user_dir);
+        MultiByteToWideChar(CP_UTF8, 0, where, -1, log, 4200);
+        MessageBoxW(NULL, log, L"RESOGUN", MB_OK | MB_ICONERROR);
+    }
+    ExitProcess(code);
+}
+#endif
+
 int bootstrap_wanted(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if ((!strcmp(argv[i], "--after") || !strcmp(argv[i], "--timeout")) && i + 1 < argc) { ++i; continue; }
@@ -396,6 +559,9 @@ int bootstrap(int *argc, char ***argv) {
     args[n] = NULL;
     *argc = n;
     *argv = args;
+#ifdef _WIN32
+    watch_game(n, args);  /* does not return */
+#endif
     return 0;
 }
 

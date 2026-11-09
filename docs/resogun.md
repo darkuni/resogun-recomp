@@ -183,3 +183,13 @@ Checked against the Python scripts on the RESOGUN dump:
   `prepare.py` + `link_modules.py` + `function_starts.py` + `content_profile.py` (0.1 s).
 - First start, second start (10 ms, nothing redone), only an update PKG, nothing beside the
   program: each shows the right result or message.
+
+## Second Windows test: no report
+
+With the one-program build the game ended right after the shader cache was read, and the log
+ended without any fault report: the end bypassed the port's exception handlers (a fast fail, heap
+corruption, or the driver ending the process). The game now runs in a child process of
+`resogun.exe`; the parent logs the child's exit code and appends Windows' own Application Error /
+Windows Error Reporting events for it (faulting module, offset, exception code). A fault the port
+does see also writes `user/crash.dmp` (all threads), and the first exceptions raised in drivers and
+system libraries are logged as they happen.

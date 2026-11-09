@@ -27,6 +27,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
+#include <dbghelp.h>
 #include <intrin.h>
 #else
 #include <sys/mman.h>
@@ -503,6 +504,29 @@ static void report_fault_thread(const CONTEXT *c) {
         fprintf(stderr,"  ?%d [rsp+0x%" PRIxPTR "] %s\n",shown++,a-sp,where);
     }
 }
+/* A minidump of every thread (user/crash.dmp, next to the log) for faults the report above cannot
+ * explain, such as one inside a graphics driver. */
+static void write_minidump(EXCEPTION_POINTERS *info) {
+    typedef BOOL (WINAPI *Write)(HANDLE,DWORD,HANDLE,MINIDUMP_TYPE,PMINIDUMP_EXCEPTION_INFORMATION,
+                                 PMINIDUMP_USER_STREAM_INFORMATION,PMINIDUMP_CALLBACK_INFORMATION);
+    const char *dir=getenv("GOW3_GPU_USER_DIR");
+    if (!dir) return;
+    HMODULE m=LoadLibraryW(L"dbghelp.dll");
+    Write write=m ? (Write)(void *)GetProcAddress(m,"MiniDumpWriteDump") : NULL;
+    if (!write) return;
+    char path[4200];
+    wchar_t w[4200];
+    snprintf(path,sizeof(path),"%s\\crash.dmp",dir);
+    if (!MultiByteToWideChar(CP_UTF8,0,path,-1,w,4200)) return;
+    HANDLE file=CreateFileW(w,GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+    if (file==INVALID_HANDLE_VALUE) return;
+    MINIDUMP_EXCEPTION_INFORMATION e={GetCurrentThreadId(),info,FALSE};
+    const MINIDUMP_TYPE type=(MINIDUMP_TYPE)(MiniDumpWithThreadInfo|MiniDumpWithUnloadedModules|
+                                             MiniDumpWithIndirectlyReferencedMemory|MiniDumpWithProcessThreadData);
+    if (write(GetCurrentProcess(),GetCurrentProcessId(),file,type,&e,NULL,NULL))
+        fprintf(stderr,"  minidump written: %s\n",path);
+    CloseHandle(file);
+}
 static int fatal_reported;
 static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
@@ -553,6 +577,8 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
         }
     }
     if (isa_table) isa_rewrite_report(isa_table,stderr);
+    fflush(NULL);
+    write_minidump(info);
     fflush(NULL);
     TerminateProcess(GetCurrentProcess(),3);
     return EXCEPTION_CONTINUE_SEARCH;
@@ -610,6 +636,20 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
     }
     /* GOW3_STRICT_HANDLES=1: a closed or invalid handle used anywhere is reported (diagnostics). */
     if (code==0xC0000008 /* STATUS_INVALID_HANDLE */) return fatal_exception(info);
+    /* Other exceptions (in drivers and system libraries) are left to their own handlers; the
+     * first few are logged, as the last trace of an end no handler reports. */
+    static int foreign_logged;
+    if (code!=0x406D1388 /* thread name */ && code!=0x40010006 && code!=0x4001000A /* debug strings */ &&
+        __atomic_fetch_add(&foreign_logged,1,__ATOMIC_RELAXED)<12) {
+        char where[MAX_PATH+64];
+        describe_address(where,sizeof(where),(uintptr_t)record->ExceptionAddress);
+        if (code==EXCEPTION_ACCESS_VIOLATION && record->NumberParameters>=2)
+            fprintf(stderr,"Exception (first chance): %s access to %p at %s (thread %lu)\n",
+                    record->ExceptionInformation[0]==1 ? "write" : record->ExceptionInformation[0]==8 ? "execute" : "read",
+                    (void *)record->ExceptionInformation[1],where,GetCurrentThreadId());
+        else
+            fprintf(stderr,"Exception (first chance): 0x%08lx at %s (thread %lu)\n",code,where,GetCurrentThreadId());
+    }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 static LONG WINAPI unhandled_fault(EXCEPTION_POINTERS *info) { return fatal_exception(info); }
@@ -1223,6 +1263,7 @@ int main(int argc, char **argv) {
         if (code) return code;
         bootstrapped = 1;
     }
+    if (getenv("RESOGUN_WATCHED")) bootstrapped = 1;  /* the game process bootstrap() started */
     int cpu_only = 0, strict_imports = 0, check_imports = 0;
     unsigned timeout_seconds = 10;
     const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *isa_file=NULL, *pause_menu=NULL;
