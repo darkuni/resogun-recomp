@@ -936,6 +936,9 @@ void Instance::CollectDeviceParameters() {
     const std::string driver_name = fmt::format("{} {}", vendor_name, driver_version);
     const std::string api_version = GetReadableVersion(properties.apiVersion);
     const std::string extensions = fmt::format("{}", fmt::join(available_extensions, ", "));
+    // gow3: in the log of every start, for crash reports from inside a driver.
+    std::printf("GPU driver: %s (%s), Vulkan %s\n", driver_name.c_str(), driver.driverInfo.data(),
+                api_version.c_str());
 
     LOG_INFO(Render_Vulkan, "GPU_Vendor: {}", vendor_name);
     LOG_INFO(Render_Vulkan, "GPU_Model: {}", model_name);

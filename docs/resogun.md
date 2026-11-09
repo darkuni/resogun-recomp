@@ -154,3 +154,32 @@ splash screen, AvPlayer loaded); whether this is that crash is untested.
 With the fix the intro video plays and the game reaches its title screen ("Press ✕ to start")
 with no errors, still on lavapipe (about 15 minutes of software rendering to get there).
 
+
+## First Windows test (RTX 4070 Ti)
+
+On Shane's PC the game passed the title screen and started loading the game itself (data
+workers, task threads, about 320 pipelines compiled), then faulted inside NVIDIA's driver:
+`read access to 0000000000000130 at nvoglv64.dll+0xe3b270`, exit 3. The stack pointer was about
+1.7 KB below its stack's top, so the faulting thread had only just started: by all signs one of
+the driver's own worker threads, not a call from the game or the port. The crash report could not
+say more: the driver keeps no frame pointers and its unwind found nothing.
+
+The crash report now also prints the faulting thread's name and start address, the fiber running
+on it if any, and a scan of its stack for return addresses (values just after a call instruction
+in a loaded module or the game); the log names the Vulkan driver and its version at every start.
+
+## One program instead of the launcher
+
+The Python launcher, its scripts and the WipEout packaging are replaced, for players, by the
+loader itself: `resogun.exe` / `resogun` started without arguments (src/bootstrap.c) finds the
+PKGs or a `game` folder beside it, unpacks the PKGs (src/boot_pkg.c, src/boot_crypto.c) and
+prepares the game (src/boot_prepare.c) on the first start, then sets what run.py used to set
+(resogun.ini, user/, restart command) and starts.
+
+Checked against the Python scripts on the RESOGUN dump:
+
+- PKG unpack of 01.00 + 01.10: the same 36 files, byte for byte (9 s + 14 s).
+- Preparation: `boot-linked.bin`, `functions.bin` and `content.bin` byte-identical to
+  `prepare.py` + `link_modules.py` + `function_starts.py` + `content_profile.py` (0.1 s).
+- First start, second start (10 ms, nothing redone), only an update PKG, nothing beside the
+  program: each shows the right result or message.

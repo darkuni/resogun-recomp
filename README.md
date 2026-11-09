@@ -7,11 +7,33 @@ system libraries, and the graphics are translated to Vulkan by the shadPS4 video
 no CPU emulator.
 
 > **Status: reaches the title screen. Not playable yet.** Every PS4 function RESOGUN imports is
-> answered; on Linux the game boots, plays its intro video and shows "Press ✕ to start". Not yet
-> tested on a real GPU, or on Windows. Details: [docs/resogun.md](docs/resogun.md).
-> Analysis notes: [docs/resogun.md](docs/resogun.md).
+> answered; the game boots, plays its intro video and shows "Press ✕ to start", and on Windows
+> (RTX 4070 Ti) it starts loading the game after that. Details: [docs/resogun.md](docs/resogun.md).
 
-No game files are included. You need your own dump of the game.
+No game files are included. You need your own RESOGUN for PS4 (CUSA00038) as fake PKGs.
+
+## Getting a build
+
+Every push to `main` builds both packages (**Actions > Build Windows and Linux**):
+
+- **Windows:** the `resogun-win64` artifact: `resogun.exe` and its DLLs.
+- **Linux / Steam Deck:** the `resogun-linux-x86_64` artifact: `resogun` and `lib/` in a .tar.gz.
+
+## First start
+
+1. Unpack the build anywhere and put your PKGs next to `resogun.exe` (Linux: `resogun`): the game
+   and, if you have it, the 1.10 update.
+2. Run `resogun.exe` (Linux: `./resogun`).
+3. The first start unpacks the PKGs into `game/` beside the program (about 1 GB, under a minute,
+   with a progress window) and prepares the game once (`out/`). Later starts go straight to the
+   game; the PKGs can then be deleted. A ready game folder named `game` (with `eboot.bin`) works
+   too.
+
+Settings: the in-game menu (Insert, or R3 + L2), saved in `resogun.ini` beside the program.
+Every start writes `user/last_run.log`; attach it to bug reports.
+
+Steam Deck Gaming Mode: add `resogun` as a non-Steam game and choose **Steam Linux Runtime** (not
+Proton) under Properties > Compatibility.
 
 ## Supported game versions
 
@@ -19,101 +41,34 @@ No game files are included. You need your own dump of the game.
 |---|---|---|---|
 | CUSA00038 | US | 01.00 + update 01.10 | Development target |
 
-The base game and the update are merged into one folder (the update's files replace the base
-game's). The intro videos only come with the base game.
+## Building
 
-## Building (Windows)
-
-1. Install [MSYS2](https://www.msys2.org) (`winget install MSYS2.MSYS2`) and, in the
-   **MSYS2 CLANG64** shell, the packages listed in
-   [packaging/windows/README.md](packaging/windows/README.md).
-2. Install Python 3.10+ from python.org (with Tk), then:
-
-   ```powershell
-   python -m pip install pillow iced-x86==1.21.0 cryptography
-   ```
-
-3. Clone with submodules and build in the MSYS2 CLANG64 shell:
-
-   ```bash
-   git clone --recursive https://github.com/darkuni/resogun-recomp
-   cd resogun-recomp
-   bash build.sh
-   ```
-
-   If Git converts line endings on your PC (`core.autocrlf=true`), the FSR patches do not
-   apply. Turn it off for this repository and its submodules before building:
-
-   ```bash
-   git config core.autocrlf false
-   git submodule foreach --recursive git config core.autocrlf false
-   git rm -rq --cached . && git reset -q --hard
-   git submodule foreach --recursive 'git rm -rq --cached . && git reset -q --hard'
-   ```
-
-## Preparing your game
-
-From fake PKGs of your own dump (base game and update):
-
-```powershell
-python scripts/pkg_extract.py <base.pkg> D:\games\CUSA00038
-python scripts/pkg_extract.py <update.pkg> D:\games\CUSA00038-patch
-```
-
-Extraction first reads the PKG to calculate its SHA-256. A retry keeps only files recorded as
-complete for that exact package whose size and modification time have not changed. Older
-extractions without this record are extracted again once, even when file sizes match.
-
-Then move the update's files over the base game folder, or pass the update folder with
-`GOW3_PATCH_DIR`. A folder dumped with GoldHEN works the same way.
-
-## Running
-
-Start the launcher, choose your game folder on the **Game** page, then click **Play**:
-
-```powershell
-python launcher\gow3_launcher_win.py
-```
-
-The **Advanced** page can put a shortcut on the desktop. Settings: display mode, frame rate
-limit, VSync, anisotropic filtering, HDR, controls, mods and the game language.
-
-Without the launcher, `run.py` starts the game:
-
-```powershell
-$env:GOW3_GAME_DIR = 'D:\games\CUSA00038'
-python run.py
-```
-
-List the PS4 functions the runtime does not have yet:
-
-```powershell
-$env:GOW3_GAME_DIR = 'D:\games\CUSA00038'
-$env:GOW3_MODS_ENABLED = '0'
-python run.py --check-imports
-```
-
-Without `--check-imports`, `run.py` starts the game. The loader stops at the first system
-function the runtime does not implement and prints its name.
+Windows: MSYS2 CLANG64 with the packages listed in `.github/workflows/build.yml`, then
+`bash build.sh` and `bash packaging/windows/package-resogun.sh` (gives `dist/resogun-win64.zip`).
+Linux (Ubuntu 24.04): `bash packaging/linux/ci-deps.sh`, `bash build.sh`,
+`bash packaging/linux/package-resogun.sh` (gives `dist/resogun-linux-x86_64.tar.gz`).
+`out/gow3-probe` started without arguments behaves as `resogun`. `bash build.sh --test` runs the
+unit tests.
 
 ## How it works
 
 | Part | Where | What it does |
 |---|---|---|
-| PKG unpack | `scripts/pkg_extract.py` | Decrypts and unpacks fake PKGs (PFS, PFSC), as shadPS4 does |
+| First start | `src/bootstrap.c` | Finds the game next to the program, unpacks, prepares, starts |
+| PKG unpack | `src/boot_pkg.c`, `src/boot_crypto.c` | Decrypts and unpacks fake PKGs (PFS, PFSC); the C version of `scripts/pkg_extract.py` |
 | Game profiles | `scripts/game_profiles.py` | System modules to link per title ID |
-| Preparation | `scripts/prepare.py`, `link_libc.py`, `link_modules.py` | Reads `eboot.bin` and links the game's own `libc`, `libSceFios2` (and `libSceNpToolkit2` for WipEout) |
+| Preparation | `src/boot_prepare.c` | Reads `eboot.bin` and links the game's own `libc` and `libSceFios2`; the C version of `scripts/prepare.py`, `link_modules.py`, `function_starts.py`, `content_profile.py` (same output, byte for byte) |
 | Import names | `scripts/gen_import_names.py`, `src/import_names.inc` | Maps the game's import NIDs to function names |
 | Loader | `src/probe.c` | Loads the image and starts the game's original code |
 | Runtime | `src/runtime_*.c` | PS4 system functions |
 | Audio3d | `src/runtime_audio.c` | Mixes the bed and the sound objects of the Wwise sink into one output |
 | Json2 | `src/runtime_json.c` | sce::Json values, parser and serializer |
 | Red zones | `src/redzone.cpp`, `scripts/function_starts.py` | Keeps Windows exception records out of the game's red zones |
-| Launcher | `launcher/` | Settings window and game start |
 | GPU | `gpu/shadps4/` | shadPS4 video core (Vulkan) |
 
-Many names (`gow3-probe.exe`, `GOW3_*` variables, the launcher) still come from the God of
-War III port this runtime started as. WipEout Omega Collection and God of War III profiles stay
+Many internal names (`gow3-probe`, `GOW3_*` variables) still come from the God of War III port
+this runtime started as. The Python launcher and scripts of the ports this comes from stay for
+development; players get only `resogun`. WipEout Omega Collection and God of War III profiles stay
 in place while the runtime is shared.
 
 ## Credits

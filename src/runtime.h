@@ -124,6 +124,8 @@ uintptr_t runtime_json_resolve(const char *name);
 void runtime_json_report(void);
 uintptr_t runtime_fiber_resolve(const char *name);
 void runtime_fiber_report(void);
+/* Name of the fiber running on this thread, or NULL (for crash reports). */
+const char *runtime_fiber_current_name(void);
 const char *runtime_thread_name(void *handle);
 uint64_t runtime_memory_flexible_available(void);
 unsigned char *runtime_image_base(void);

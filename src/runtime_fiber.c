@@ -317,6 +317,10 @@ static const RuntimeExport exports[] = {
     {"sceFiberReturnToThread", fiber_return_to_thread},
 };
 uintptr_t runtime_fiber_resolve(const char *name) { return RUNTIME_LOOKUP(exports, name); }
+const char *runtime_fiber_current_name(void) {
+    const Fiber *f = fiber_thread_state.current;
+    return f ? f->name : NULL;
+}
 void runtime_fiber_report(void) {
     if (fibers_created)
         printf("Runtime: fibers created=%llu, switches=%llu\n", (unsigned long long)fibers_created, (unsigned long long)fiber_switches);

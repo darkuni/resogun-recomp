@@ -7,6 +7,7 @@
 #include <inttypes.h>
 #include "runtime_online.h"
 #include "runtime.h"
+#include "bootstrap.h"
 #include "cpu_check.h"
 #include "isa_rewrite.h"
 #include "orb_hook.h"
@@ -455,6 +456,53 @@ static void report_exit_caller(void) {
     }
     fflush(stderr);
 }
+/* The faulting thread for the crash report: its name, where it started (a graphics driver's own
+ * worker thread starts in the driver), and the return addresses found on its stack. The scan
+ * keeps values that point just after a call instruction in a loaded module or the guest image,
+ * so a fault in code without unwind data (a driver) still shows who called it.
+ * ponytail: a scan can list stale return addresses; the first ones are the most likely. */
+static int follows_call(uintptr_t ret) {
+    unsigned char b[7];
+    SIZE_T got=0;
+    if (!ReadProcessMemory(GetCurrentProcess(),(void *)(ret-7),b,sizeof(b),&got) || got!=sizeof(b)) return 0;
+    return b[2]==0xE8                                   /* call rel32 */
+        || (b[1]==0xFF && (b[2]&0x38)==0x10)            /* call [rip+disp32] and other modrm forms */
+        || (b[4]==0xFF && (b[5]&0x38)==0x10)            /* call [reg+disp8] */
+        || (b[5]==0xFF && (b[6]&0xF8)==0xD0);           /* call reg */
+}
+static void report_fault_thread(const CONTEXT *c) {
+    typedef HRESULT (WINAPI *Describe)(HANDLE,PWSTR *);
+    typedef LONG (NTAPI *QueryThread)(HANDLE,int,PVOID,ULONG,PULONG);
+    const Describe describe=(Describe)(void *)GetProcAddress(GetModuleHandleA("kernel32.dll"),"GetThreadDescription");
+    const QueryThread query=(QueryThread)(void *)GetProcAddress(GetModuleHandleA("ntdll.dll"),"NtQueryInformationThread");
+    char where[MAX_PATH+96];
+    PWSTR name=NULL;
+    if (describe && SUCCEEDED(describe(GetCurrentThread(),&name)) && name && *name) fprintf(stderr,"  thread name '%ls'\n",name);
+    if (name) LocalFree(name);
+    uintptr_t start=0;
+    if (query && query(GetCurrentThread(),9 /* ThreadQuerySetWin32StartAddress */,&start,sizeof(start),NULL)==0 && start) {
+        describe_address(where,sizeof(where),start);
+        fprintf(stderr,"  thread started at %s\n",where);
+    }
+    const char *fiber=runtime_fiber_current_name();
+    if (fiber) fprintf(stderr,"  running fiber '%s'\n",fiber);
+    const NT_TIB *tib=(const NT_TIB *)NtCurrentTeb();
+    uintptr_t top=(uintptr_t)tib->StackBase, sp=(uintptr_t)c->Rsp;
+    if (!(sp<top && top-sp<=(64u<<10))) top=sp+(64u<<10);
+    fprintf(stderr,"  stack scan (rsp+0x0 to +0x%" PRIxPTR "):\n",top-sp);
+    int shown=0;
+    for (uintptr_t a=sp; a+8<=top && shown<16; a+=8) {
+        uintptr_t v=0;
+        SIZE_T got=0;
+        if (!ReadProcessMemory(GetCurrentProcess(),(void *)a,&v,sizeof(v),&got) || got!=sizeof(v)) break;
+        HMODULE module=NULL;
+        int known=(image && v-(uintptr_t)image<image_size)
+               || (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)v,&module) && module);
+        if (!known || !follows_call(v)) continue;
+        describe_address(where,sizeof(where),v);
+        fprintf(stderr,"  ?%d [rsp+0x%" PRIxPTR "] %s\n",shown++,a-sp,where);
+    }
+}
 static int fatal_reported;
 static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
@@ -470,6 +518,7 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
         fprintf(stderr,"Fault: exception 0x%08lx at %s (thread %lu)\n",record->ExceptionCode,where,GetCurrentThreadId());
     fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
+    report_fault_thread(c);
     if (gpu_enabled) gow3gpu_dump_guest_writes(info);
     /* rbp chain (guest and host code keep frame pointers). */
     uintptr_t rbp=(uintptr_t)c->Rbp;
@@ -1167,6 +1216,13 @@ int main(int argc, char **argv) {
     runtime_memory_reserve();
     runtime_thread_tcb_offset();
 #endif
+    /* Started by itself (double-click, Steam): find, unpack and prepare the game (bootstrap.c). */
+    int bootstrapped = 0;
+    if (bootstrap_wanted(argc, argv)) {
+        int code = bootstrap(&argc, &argv);
+        if (code) return code;
+        bootstrapped = 1;
+    }
     int cpu_only = 0, strict_imports = 0, check_imports = 0;
     unsigned timeout_seconds = 10;
     const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *isa_file=NULL, *pause_menu=NULL;
@@ -1194,8 +1250,15 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--check-imports] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--isa-rewrite file] [--pause-menu R_UI.WAD] [--mount guest=host]... [--timeout seconds] | --vulkan-only | --cpu-features | --gamepad\n", argv[0]);
         return 1;
     }
-    if (!cpu_supported(missing, sizeof missing)) return 20;
+    if (!cpu_supported(missing, sizeof missing)) {
+        if (bootstrapped) bootstrap_cpu_message(missing, 1);
+        return 20;
+    }
     if (cpu_missing_sets) printf("CPU: missing %s\n", missing);
+    if (bootstrapped && cpu_missing_sets) {
+        bootstrap_cpu_message(missing, 0);  /* the instruction rewrite needs the Python launcher */
+        return 20;
+    }
     /* GOW3_ISA_REWRITE=0 never rewrites, =1 rewrites every site; by default the sets the CPU lacks. */
     const char *policy = getenv("GOW3_ISA_REWRITE");
     unsigned isa_sets = policy && !strcmp(policy, "1") ? 0xffffffffu : policy && !strcmp(policy, "0") ? 0 : cpu_missing_sets;
