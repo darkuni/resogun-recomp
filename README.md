@@ -7,7 +7,8 @@ system libraries, and the graphics are translated to Vulkan by the shadPS4 video
 no CPU emulator.
 
 > **Status: just started. Not playable yet.** The runtime is imported unchanged from wipeout_pc
-> and a RESOGUN profile is added. Next: list and implement the missing PS4 imports.
+> and a RESOGUN profile is added. It builds on Linux; 105 PS4 functions are still missing
+> ([list](docs/resogun.md#import-check-first-build)). The game has not been started yet.
 > Analysis notes: [docs/resogun.md](docs/resogun.md).
 
 No game files are included. You need your own dump of the game.

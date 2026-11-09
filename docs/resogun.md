@@ -46,9 +46,47 @@ libSceInvitationDialog, libSceNpFriendListDialog, libSceCompanionHttpd, libSceHt
 libSceNet, libSceNetCtl, libSceNpAuth, libSceNpCommerce, libSceNpCommon, libSceNpManager,
 libSceNpMatching2, libSceNpScore, libSceNpTrophy, libSceNpTus, libSceNpUtility, libSceNpWebApi.
 
-Not in the WipEout runtime yet, by first guess: AvPlayer (the intro videos), Fiber, Move,
-MoveTracker, Camera, Hmd/VrTracker (PS VR support), ScreenShot, CompanionHttpd, NpScore/NpTus
-(leaderboards). `run.py --check-imports` gives the exact list.
+## Import check (first build)
+
+Built on Linux (Ubuntu 24.04, `GOW3_LTO=OFF bash build.sh`) and run with
+`run.py --check-imports` on 01.00 + 01.10. Preparation works unchanged: the game's own libc and
+Fios2 link at `0x15b0000` / `0x16b0000` (203 native bindings, `fs`->`gs` patched 10 times),
+leaving 644 imports to the host runtime. **105 of them are missing.**
+
+AvPlayer (the intro videos) is covered by shadPS4's library in the video core; Move and Camera
+answer "not connected" (`src/runtime_extra.c`). Gnm, VideoOut, AudioOut, Audio3d, Pad, SaveData
+and the rest of libkernel are covered.
+
+Missing, by library (names from `tools/aerolib.inl`):
+
+**Needed for the game to run**
+
+- libSceFiber (6): `_sceFiberInitializeImpl`, `sceFiberFinalize`, `sceFiberGetSelf`,
+  `sceFiberReturnToThread`, `sceFiberRun`, `sceFiberSwitch`. No implementation in the runtime
+  yet; needs real context switching.
+- libSceJson2 (13): `sce::Json::Value::set` (ValueType, String, bool, double, long, unsigned
+  long), `Value::count`, `Value::toString`, `Value::operator bool`, `Value::operator[](unsigned
+  long)`, `String::at`, `String::length`, `String::operator==(const char*)`. Extends
+  `src/runtime_json.c`.
+- libkernel (3): `sceKernelSleep`, `scePthreadGetthreadid`, `scePthreadSetschedparam`.
+- libSceRtc (3): `sceRtcParseDateTime`, `sceRtcTickAddHours`, `sceRtcTickAddSeconds`.
+- libSceAppContent (2): `sceAppContentGetAddcontInfo`, `sceAppContentTemporaryDataMount2`.
+- libScePad (1): `scePadSetMotionSensorState`.
+- libSceUserService (1): `sceUserServiceGetUserColor`.
+- libSceSystemService (1): `sceSystemServiceReenableMusicPlayer`.
+
+**Stub as unavailable (PS VR, PSN, companion app, dialogs)**
+
+- libSceVrTracker (11) and libSceHmd (4): PS VR. Report no headset.
+- libSceCompanionHttpd (10): the second-screen companion app server.
+- libSceNpScore (8) and libSceNpTus (10): leaderboards and title user storage.
+- libSceNpManager (4), libSceNpUtility (3, word filter), libSceNpMatching2 (1),
+  libSceNpCommerce (1), libSceNpFriendListDialog (6), libSceInvitationDialog (1),
+  libSceWebBrowserDialog (5), libSceErrorDialog (1).
+- libSceIme (3), libSceImeDialog (1): on-screen keyboard.
+- libSceHttp (2), libSceNet (1), libSceScreenShot (3).
+
+The check lists imports only; the game has not been started yet.
 
 ## shadPS4 reports for this game
 
