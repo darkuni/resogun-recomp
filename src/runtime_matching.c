@@ -1106,6 +1106,11 @@ static ABI int32_t m2_get_user_info(uint16_t ctx_id, const GGetUserInfoRequest *
     TRACE("sceNpMatching2GetUserInfoListA: not supported");
     return M2_ERROR_INVALID_ARGUMENT;
 }
+static ABI int32_t m2_get_member_external(uint16_t ctx_id, const void *req, const GRequestOptParam *opt, uint32_t *assigned) {
+    (void)ctx_id; (void)req; (void)opt; (void)assigned;
+    TRACE("sceNpMatching2GetRoomMemberDataExternalList: not supported");
+    return M2_ERROR_INVALID_ARGUMENT;
+}
 /* ---- local queries ---- */
 static ABI int32_t m2_member_id_list(uint16_t ctx_id, uint64_t room_id, int32_t sort, uint16_t *ids, uint32_t max) {
     (void)sort;
@@ -1194,6 +1199,7 @@ static const RuntimeExport exports[] = {
     {"sceNpMatching2SendRoomMessage", m2_send_message}, {"sceNpMatching2SendRoomChatMessage", m2_send_chat},
     {"sceNpMatching2GetRoomMemberDataInternal", m2_get_member}, {"sceNpMatching2GetRoomDataInternal", m2_get_room_internal},
     {"sceNpMatching2GetRoomDataExternalList", m2_get_room_external_list},
+    {"sceNpMatching2GetRoomMemberDataExternalList", m2_get_member_external},
     {"sceNpMatching2SignalingGetPingInfo", m2_ping},
     {"sceNpMatching2SetUserInfo", m2_set_user_info}, {"sceNpMatching2GetUserInfoListA", m2_get_user_info},
     {"sceNpMatching2GetRoomMemberIdListLocal", m2_member_id_list}, {"sceNpMatching2GetSignalingOptParamLocal", m2_sig_opt_local},

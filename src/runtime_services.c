@@ -593,6 +593,50 @@ static ABI int32_t mouse_close(int32_t handle) { (void)handle; return 0; }
 static ABI int32_t audio_in_open(void) { return AUDIO_IN_NOT_OPENED; }
 
 
+/* sceUserServiceGetUserColor: player 1 blue, player 2 red (SCE_USER_SERVICE_USER_COLOR_*). */
+static ABI int32_t user_color(int32_t id,int32_t *color) {
+    if ((id!=USER_ID && id!=USER2_ID) || !color) return USER_INVALID_ARGUMENT;
+    *color=id==USER_ID ? 0 : 1; return 0;
+}
+/* Hardware keyboard (libSceIme keyboard API): opens, never reports a key; sceImeUpdate has no events. */
+static ABI int32_t ime_keyboard_ok(void) { return 0; }
+/* libSceVrTracker without a PS VR headset (error codes and memory sizes as shadPS4's vr_tracker). */
+#define VRT_NOT_INIT ((int32_t)0x81260801)
+#define VRT_ALREADY_INIT ((int32_t)0x81260802)
+#define VRT_NOT_REGISTERED ((int32_t)0x81260803)
+#define VRT_INVALID ((int32_t)0x81260806)
+#define VRT_NO_GPU_SUBMIT ((int32_t)0x81260815)
+static int vr_tracker_ready;
+typedef struct { uint32_t size, onion_size, onion_align, garlic_size, garlic_align, work_size, work_align, reserved[9]; } VrTrackerMemory;
+static ABI int32_t vrt_query_memory(const uint32_t *param,VrTrackerMemory *out) {
+    if (!param || !out) return VRT_INVALID;
+    const uint32_t *calibration=param+8; /* after size, profile, reserved[6]: hmd, pad, move, gun */
+    uint32_t onion=0x400000u*(calibration[2]==1 ? 2 : 1); /* automatic Move calibration doubles it */
+    out->onion_size=onion; out->onion_align=0x10000; out->garlic_size=0x3000000; out->garlic_align=0x10000;
+    out->work_size=0x1000000; out->work_align=0x10000; return 0;
+}
+static ABI int32_t vrt_init(const void *param) {
+    if (!param) return VRT_INVALID;
+    if (vr_tracker_ready) return VRT_ALREADY_INIT;
+    vr_tracker_ready=1; note("VrTracker: initialized without a PS VR headset"); return 0;
+}
+static ABI int32_t vrt_term(void) { vr_tracker_ready=0; return 0; }
+static ABI int32_t vrt_ready(void) { return vr_tracker_ready ? 0 : VRT_NOT_INIT; }
+static ABI int32_t vrt_time(uint64_t *time) {
+    if (!vr_tracker_ready) return VRT_NOT_INIT;
+    if (!time) return VRT_INVALID;
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts);
+    *time=(uint64_t)ts.tv_sec*1000000u+(uint64_t)ts.tv_nsec/1000u; return 0;
+}
+static ABI int32_t vrt_gpu_submit(void) { return vr_tracker_ready ? VRT_INVALID : VRT_NOT_INIT; }
+static ABI int32_t vrt_gpu_wait(void) { return vr_tracker_ready ? VRT_NO_GPU_SUBMIT : VRT_NOT_INIT; }
+static ABI int32_t vrt_not_registered(void) { return vr_tracker_ready ? VRT_NOT_REGISTERED : VRT_NOT_INIT; }
+/* libSceCompanionHttpd (second-screen app): the server starts and never receives a request. */
+static ABI int32_t companion_no_event(void *event) {
+    if (event) *(int32_t *)event=0x10000002; /* ORBIS_COMPANION_HTTPD_EVENT_DISCONNECT */
+    return (int32_t)0x80E40008; /* NO_EVENT */
+}
+
 static const RuntimeExport exports[]={
     {"sceUserServiceInitialize",user_initialize}, {"sceUserServiceTerminate",user_terminate},
     {"sceUserServiceGetInitialUser",user_initial}, {"sceUserServiceGetLoginUserIdList",user_list},
@@ -775,5 +819,34 @@ static const RuntimeExport exports[]={
     {"sceAudioInOpen",audio_in_open},
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
     {"sceVoiceInit",ok_void}, {"sceVoiceEnd",ok_void},
+    /* RESOGUN (CUSA00038) */
+    {"sceUserServiceGetUserColor",user_color}, {"sceSystemServiceReenableMusicPlayer",ok_void},
+    {"sceHttpCreateConnection",http_object}, {"sceHttpCreateRequest2",http_object},
+    {"sceNpGetParentalControlInfoA",np_signed_out},
+    {"sceNpRegisterStateCallbackA",np_register}, {"sceNpUnregisterStateCallbackA",ok_void},
+    {"sceNpInGameMessageAbortHandle",ok_void}, {"sceNpMatching2GetRoomMemberDataExternalList",np_signed_out},
+    /* Score and TUS asynchronous requests start, then finish signed out (np_poll). */
+    {"sceNpScoreGetBoardInfoAsync",ok_void}, {"sceNpScoreGetFriendsRankingAAsync",ok_void},
+    {"sceNpScoreGetGameDataByAccountIdAsync",ok_void}, {"sceNpScoreGetRankingByAccountIdAsync",ok_void},
+    {"sceNpScoreGetRankingByRangeAAsync",ok_void}, {"sceNpScoreRecordGameDataAsync",ok_void},
+    {"sceNpScoreRecordScoreAsync",ok_void}, {"sceNpScorePollAsync",np_poll},
+    {"sceNpTssGetDataAsync",ok_void}, {"sceNpTusAddAndGetVariableAAsync",ok_void},
+    {"sceNpTusAddAndGetVariableAVUserAsync",ok_void}, {"sceNpTusGetDataAAsync",ok_void},
+    {"sceNpTusGetDataAVUserAsync",ok_void}, {"sceNpTusGetMultiSlotVariableAAsync",ok_void},
+    {"sceNpTusGetMultiSlotVariableAVUserAsync",ok_void}, {"sceNpTusSetDataAAsync",ok_void},
+    {"sceNpTusSetDataAVUserAsync",ok_void}, {"sceNpTusPollAsync",np_poll},
+    {"sceNpWordFilterCreateAsyncRequest",np_request}, {"sceNpWordFilterCensorComment",ok_void},
+    {"sceNpWordFilterPollAsync",np_poll},
+    {"sceImeKeyboardOpen",ime_keyboard_ok}, {"sceImeKeyboardClose",ime_keyboard_ok}, {"sceImeUpdate",ime_keyboard_ok},
+    {"sceVrTrackerQueryMemory",vrt_query_memory}, {"sceVrTrackerInit",vrt_init}, {"sceVrTrackerTerm",vrt_term},
+    {"sceVrTrackerRegisterDevice",vrt_ready}, {"sceVrTrackerUnregisterDevice",vrt_ready},
+    {"sceVrTrackerGetResult",vrt_not_registered}, {"sceVrTrackerRecalibrate",vrt_not_registered},
+    {"sceVrTrackerGetTime",vrt_time}, {"sceVrTrackerGpuSubmit",vrt_gpu_submit},
+    {"sceVrTrackerGpuWaitAndCpuProcess",vrt_gpu_wait}, {"sceVrTrackerUpdateMotionSensorData",vrt_ready},
+    {"sceCompanionHttpdInitialize2",ok_void}, {"sceCompanionHttpdTerminate",ok_void},
+    {"sceCompanionHttpdStart",ok_void}, {"sceCompanionHttpdStop",ok_void},
+    {"sceCompanionHttpdGetEvent",companion_no_event},
+    {"sceCompanionHttpdRegisterRequestCallback",ok_void}, {"sceCompanionHttpdUnregisterRequestCallback",ok_void},
+    {"sceCompanionHttpdAddHeader",ok_void}, {"sceCompanionHttpdSetBody",ok_void}, {"sceCompanionHttpdSetStatus",ok_void},
 };
 uintptr_t runtime_services_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }

@@ -122,6 +122,8 @@ void runtime_extra_report(void);
 /* libSceJson2 (runtime_json.c). */
 uintptr_t runtime_json_resolve(const char *name);
 void runtime_json_report(void);
+uintptr_t runtime_fiber_resolve(const char *name);
+void runtime_fiber_report(void);
 const char *runtime_thread_name(void *handle);
 uint64_t runtime_memory_flexible_available(void);
 unsigned char *runtime_image_base(void);

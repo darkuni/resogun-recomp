@@ -357,6 +357,13 @@ static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
     if (!find_thread(t)) return ERR(3);
     t->attr.prio=prio; return 0;
 }
+typedef struct { int32_t priority; } SchedParam;
+/* Recorded like the priority above; the host scheduler decides. */
+static ABI int32_t thread_set_schedparam(GuestThread *t,int policy,const SchedParam *param) {
+    if (!find_thread(t)) return ERR(3);
+    if (!param) return ERR(22);
+    t->attr.policy=policy; t->attr.prio=param->priority; return 0;
+}
 static ABI int32_t thread_set_affinity(GuestThread *t,uint64_t mask) {
     if (!find_thread(t)) return ERR(3);
     t->attr.affinity=mask; return 0;
@@ -400,7 +407,7 @@ uintptr_t runtime_thread_resolve(const char *name) {
         {"6UgtwV+0zb4#libkernel",thread_create}, {"onNY9Byn-W8#libkernel",thread_join},
         {"4qGrR6eoP9Y#libkernel",thread_detach}, {"3kg7rT0NQIs#libkernel",thread_exit},
         {"T72hz6ffq08#libkernel",thread_yield}, {"1tKyG7RlMJo#libkernel",thread_get_prio},
-        {"W0Hpm2X0uPE#libkernel",thread_set_prio}, {"bt3CTBKmGyI#libkernel",thread_set_affinity}, {"rcrVFJsQWRY#libkernel",thread_get_affinity},
+        {"W0Hpm2X0uPE#libkernel",thread_set_prio}, {"oIRFTjoILbg#libkernel",thread_set_schedparam}, {"bt3CTBKmGyI#libkernel",thread_set_affinity}, {"rcrVFJsQWRY#libkernel",thread_get_affinity},
         {"GBUY7ywdULE#libkernel",thread_rename}, {"3PtV6p3QNX4#libkernel",thread_equal},
         {"wtkt-teR1so#libkernel",posix_attr_init}, {"zHchY8ft5pk#libkernel",posix_attr_destroy},
         {"E+tyo3lp5Lw#libkernel",posix_attr_set_detach}, {"2Q0z6rnBrTE#libkernel",posix_attr_set_stack},

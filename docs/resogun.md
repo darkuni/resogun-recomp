@@ -51,13 +51,13 @@ libSceNpMatching2, libSceNpScore, libSceNpTrophy, libSceNpTus, libSceNpUtility, 
 Built on Linux (Ubuntu 24.04, `GOW3_LTO=OFF bash build.sh`) and run with
 `run.py --check-imports` on 01.00 + 01.10. Preparation works unchanged: the game's own libc and
 Fios2 link at `0x15b0000` / `0x16b0000` (203 native bindings, `fs`->`gs` patched 10 times),
-leaving 644 imports to the host runtime. **105 of them are missing.**
+leaving 644 imports to the host runtime. **105 of them were missing** (filled in below).
 
 AvPlayer (the intro videos) is covered by shadPS4's library in the video core; Move and Camera
 answer "not connected" (`src/runtime_extra.c`). Gnm, VideoOut, AudioOut, Audio3d, Pad, SaveData
 and the rest of libkernel are covered.
 
-Missing, by library (names from `tools/aerolib.inl`):
+Missing at the first check, by library (names from `tools/aerolib.inl`):
 
 **Needed for the game to run**
 
@@ -86,7 +86,38 @@ Missing, by library (names from `tools/aerolib.inl`):
 - libSceIme (3), libSceImeDialog (1): on-screen keyboard.
 - libSceHttp (2), libSceNet (1), libSceScreenShot (3).
 
-The check lists imports only; the game has not been started yet.
+## Imports filled in, first boot
+
+All 105 are now answered (`run.py --check-imports`: 0 missing):
+
+- `scripts/gen_import_names.py` added 141 RESOGUN names to `src/import_names.inc`; 15 of the
+  105 were functions the runtime already had but could not reach without their NID.
+- `src/runtime_fiber.c` (new): libSceFiber with its own context switch (rbp, rbx, r12-r15,
+  MXCSR, x87 control word), a host-allocated stack per fiber (the game's context buffer is
+  recorded, not used, as shadPS4 does on Windows), the TEB stack bounds following each switch on
+  Windows, and a fiber's new state published only after its stack is saved, so another thread
+  cannot resume it mid-switch. `tests/test_fiber.c` covers run, switch, return to the thread, an
+  entry that returns, resuming on another thread, the error results and the FPU state.
+- `src/runtime_json.c`: the six `Value::set` overloads, `Value::toString`, `Value::operator bool`
+  (the value exists), `String::at`, `String::length`.
+- `src/runtime_rtc.c`: `sceRtcTickAddHours`, `sceRtcTickAddSeconds`, `sceRtcParseDateTime`
+  (RFC 3339, RFC 2822 and asctime, with zone offsets and fractions of a second).
+- `src/runtime_kernel.c`, `src/runtime_thread.c`: `sceKernelSleep`, `scePthreadSetschedparam`
+  (recorded like the priority).
+- `src/runtime_services.c`, `src/runtime_extra.c`: the offline answers. Score and TUS requests
+  start and finish signed out; PS VR tracking initializes and reports no headset (error codes and
+  memory sizes from shadPS4); the companion app server never gets a request; dialogs report
+  unavailable; the hardware keyboard opens and never sends a key; no add-ons are entitled.
+
+First boot (Linux, Xvfb, Mesa lavapipe software Vulkan on 2 cores): the game runs, starts 32
+threads, opens 3 audio ports and streams from `stream.dat`/`audio.pck`, and draws its boot
+screens ("Sony Interactive Entertainment presents", then the XDEV logo) through the shadPS4 video
+core. No runtime errors in the log; the only warnings are Vulkan features lavapipe lacks.
+Software rendering is far too slow to judge speed; that needs a real GPU.
+
+`build.sh --test` on Linux: `pad-test` needed `-lm` (added). `runtime-test` and `sema-test` do
+not link (undefined `runtime_image_base`, `runtime_wipeout_paused`); that is unchanged from
+wipeout_pc. Every other test passes.
 
 ## shadPS4 reports for this game
 

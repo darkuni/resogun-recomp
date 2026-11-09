@@ -144,7 +144,61 @@ static ABI int32_t rtc_rfc2822_local(char *out, const uint64_t *utc_tick) {
     return 0;
 }
 
+static ABI int32_t rtc_tick_add_hours(uint64_t *out, const uint64_t *tick, int32_t hours) {
+    if (!out || !tick) return ERR_INVALID_POINTER;
+    *out=*tick+(uint64_t)((int64_t)hours*INT64_C(3600000000)); return 0;
+}
+static ABI int32_t rtc_tick_add_seconds(uint64_t *out, const uint64_t *tick, int64_t seconds) {
+    if (!out || !tick) return ERR_INVALID_POINTER;
+    *out=*tick+(uint64_t)(seconds*1000000); return 0;
+}
+static int month_from_name(const char *s) {
+    static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+    for (int i=0;i<12;++i) if (!strncmp(s,months[i],3)) return i+1;
+    return 0;
+}
+/* Zone suffix: "Z", "GMT"/"UT"/"UTC", "+hh:mm" or "+hhmm"; minutes east of UTC. */
+static int parse_zone(const char *s, int *minutes) {
+    while (*s==' ') ++s;
+    if (!*s || *s=='Z' || !strncmp(s,"GMT",3) || !strncmp(s,"UT",2)) { *minutes=0; return 1; }
+    if (*s!='+' && *s!='-') return 0;
+    int h=0,m=0;
+    if (sscanf(s+1,"%2d:%2d",&h,&m)!=2 && sscanf(s+1,"%2d%2d",&h,&m)!=2) return 0;
+    *minutes=(*s=='-' ? -1 : 1)*(h*60+m); return 1;
+}
+/* RFC 3339 "2026-11-09T07:00:00.5Z", RFC 2822 "Mon, 09 Nov 2026 07:00:00 -0700" or asctime
+ * "Mon Nov  9 07:00:00 2026" to a UTC tick. */
+static ABI int32_t rtc_parse_date_time(uint64_t *utc, const char *text) {
+    if (!utc || !text) return ERR_INVALID_POINTER;
+    DateTime t={0};
+    int y=0,mo=0,d=0,h=0,mi=0,s=0,n=0,zone=0;
+    char name[4]="";
+    if (sscanf(text,"%4d-%2d-%2d%*1[Tt ]%2d:%2d:%2d%n",&y,&mo,&d,&h,&mi,&s,&n)==6) {
+        const char *p=text+n;
+        if (*p=='.') {
+            uint32_t us=0,scale=100000;
+            for (++p;*p>='0' && *p<='9';++p) { us+=(uint32_t)(*p-'0')*scale; scale/=10; }
+            t.microsecond=us;
+        }
+        if (!parse_zone(p,&zone)) return (int32_t)0x80B50003;
+    } else if (sscanf(text,"%*3s, %2d %3s %4d %2d:%2d:%2d%n",&d,name,&y,&h,&mi,&s,&n)==6) {
+        mo=month_from_name(name);
+        if (!parse_zone(text+n,&zone)) return (int32_t)0x80B50003;
+    } else if (sscanf(text,"%*3s %3s %2d %2d:%2d:%2d %4d",name,&d,&h,&mi,&s,&y)==6) {
+        mo=month_from_name(name);
+    } else {
+        return (int32_t)0x80B50003; /* INVALID_VALUE */
+    }
+    t.year=(uint16_t)y; t.month=(uint16_t)mo; t.day=(uint16_t)d;
+    t.hour=(uint16_t)h; t.minute=(uint16_t)mi; t.second=(uint16_t)s;
+    int32_t e=validate(&t);
+    if (e) return e;
+    *utc=to_tick(&t)-(uint64_t)((int64_t)zone*60000000); return 0;
+}
+
 static const RuntimeExport exports[]={
+    {"sceRtcTickAddHours",rtc_tick_add_hours}, {"sceRtcTickAddSeconds",rtc_tick_add_seconds},
+    {"sceRtcParseDateTime",rtc_parse_date_time},
     {"sceRtcGetCurrentClockLocalTime",rtc_current_local}, {"sceRtcGetCurrentClock",rtc_current_clock},
     {"sceRtcGetCurrentTick",rtc_current_tick}, {"sceRtcGetCurrentNetworkTick",rtc_current_tick},
     {"sceRtcConvertUtcToLocalTime",rtc_utc_to_local}, {"sceRtcConvertLocalTimeToUtc",rtc_local_to_utc},

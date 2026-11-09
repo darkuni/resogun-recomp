@@ -298,6 +298,32 @@ static ABI int32_t value_set_object(JValue **self, JObject *const *o) {
     free_value(*self); *self=v;
     return 0;
 }
+/* Value::set overloads (RESOGUN): replace the value; set(ValueType) gives an empty value of that type. */
+static int32_t replace(JValue **self, JValue *v) { free_value(*self); *self=v; return 0; }
+static ABI int32_t value_set_type(JValue **self, int32_t type) {
+    return replace(self,type<=J_NULL || type>J_OBJECT ? NULL : new_value(type)); /* unknown types read as null */
+}
+static ABI int32_t value_set_string(JValue **self, char *const *text) {
+    JValue *v=new_value(J_STRING); v->s=dup_string(*text ? *text : ""); return replace(self,v);
+}
+static ABI int32_t value_set_bool(JValue **self, bool b) { JValue *v=new_value(J_BOOL); v->b=b; return replace(self,v); }
+static ABI int32_t value_set_real(JValue **self, double r) { JValue *v=new_value(J_REAL); v->r=r; return replace(self,v); }
+static ABI int32_t value_set_int(JValue **self, int64_t i) { JValue *v=new_value(J_INT); v->i=i; return replace(self,v); }
+static ABI int32_t value_set_uint(JValue **self, uint64_t u) { JValue *v=new_value(J_UINT); v->u=u; return replace(self,v); }
+/* Value::toString: the text of a string value as is, anything else as its JSON text. */
+static ABI int32_t value_to_string(JValue *const *self, char **out) {
+    if (*self && (*self)->type==J_STRING) { char *copy=dup_string((*self)->s ? (*self)->s : ""); free(*out); *out=copy; return 0; }
+    JBuffer b={0};
+    put_value(&b,*self);
+    free(*out); *out=b.data;
+    return 0;
+}
+/* Value::operator bool: whether the value exists (not null), as in `if (value["key"])`. */
+static ABI bool value_exists(JValue *const *self) { return *self!=NULL && (*self)->type!=J_NULL; }
+static ABI const char *string_at(char *const *self, uint64_t index) {
+    static const char nul=0;
+    return *self && index<strlen(*self) ? *self+index : &nul;
+}
 static ABI int32_t value_null_callback(JValue **self, void *callback, void *context) {
     (void)self; (void)callback; (void)context;
     return 0;
@@ -381,6 +407,11 @@ static const RuntimeExport exports[]={
     {"_ZN3sce4Json6StringD1Ev",string_free}, {"_ZNK3sce4Json6String5c_strEv",string_c_str},
     {"_ZNK3sce4Json6String4sizeEv",string_size}, {"_ZNK3sce4Json6String5emptyEv",string_empty},
     {"_ZNK3sce4Json6StringeqEPKc",string_equals},
+    {"_ZNK3sce4Json6String2atEm",string_at}, {"_ZNK3sce4Json6String6lengthEv",string_size},
+    {"_ZN3sce4Json5Value3setENS0_9ValueTypeE",value_set_type}, {"_ZN3sce4Json5Value3setERKNS0_6StringE",value_set_string},
+    {"_ZN3sce4Json5Value3setEb",value_set_bool}, {"_ZN3sce4Json5Value3setEd",value_set_real},
+    {"_ZN3sce4Json5Value3setEl",value_set_int}, {"_ZN3sce4Json5Value3setEm",value_set_uint},
+    {"_ZNK3sce4Json5Value8toStringERNS0_6StringE",value_to_string}, {"_ZNK3sce4Json5ValuecvbEv",value_exists},
     {"_ZN3sce4Json5ValueC1Ev",clear_handle}, {"_ZN3sce4Json5ValueC1Em",value_from_uint},
     {"_ZN3sce4Json5ValueC1ERKNS0_6StringE",value_from_string}, {"_ZN3sce4Json5ValueC1ERKNS0_5ArrayE",value_from_array},
     {"_ZN3sce4Json5ValueC1ERKNS0_6ObjectE",value_from_object}, {"_ZN3sce4Json5ValueD1Ev",value_free},

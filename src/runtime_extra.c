@@ -630,6 +630,15 @@ static const RuntimeExport exports[]={
     {"sceNpSnsFacebookDialogInitialize",ok_noop}, {"sceNpSnsFacebookDialogTerminate",ok_noop},
     /* No add-ons: downloads are accepted but never arrive, and no entitlement key exists. */
     {"sceAppContentAddcontEnqueueDownload",ok_noop}, {"sceAppContentGetEntitlementKey",no_entitlement},
+    /* RESOGUN (CUSA00038): no add-ons, no PS VR headset, offline dialogs */
+    {"sceAppContentGetAddcontInfo",no_entitlement},
+    {"sceHmdReprojectionAddDisplayBuffer",ok_noop}, {"sceHmdReprojectionSetUserEventStart",ok_noop},
+    {"sceHmdReprojectionStartWideNear",ok_noop}, {"sceHmdReprojectionStartWithOverlay",ok_noop},
+    {"sceNpFriendListDialogInitialize",ok_noop}, {"sceNpFriendListDialogTerminate",ok_noop},
+    {"sceNpFriendListDialogOpenA",dialog_unavailable}, {"sceNpFriendListDialogUpdateStatus",dialog_none},
+    {"sceNpFriendListDialogGetResultA",dialog_unavailable}, {"sceNpFriendListDialogClose",ok_noop},
+    {"sceImeDialogGetPanelSize",dialog_unavailable}, {"sceInvitationDialogClose",ok_noop},
+    {"sceNpCommerceDialogClose",ok_noop}, {"sceScreenShotSetOverlayImage",ok_noop},
     /* HTTP settings are accepted; every request still fails with SCE_HTTP_ERROR_NETWORK. */
     {"sceHttpsGetCaList",https_ca_list}, {"sceHttpsSetSslCallback",ok_noop},
     {"sceHttpSetCookieEnabled",ok_noop}, {"sceHttpSetChunkedTransferEnabled",ok_noop},
