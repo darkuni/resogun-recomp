@@ -45,6 +45,9 @@ PROFILES = {
                           'GOW3_OBJECT_MOTION': '0'},
                   'reserve': 4097 * 0x360},
     'CUSA01623': {'name': 'God of War III', 'modules': ('libc.prx', 'libSceFios2.prx')},
+    # RESOGUN 01.10 (Housemarque, Sasquatch engine). The dump ships only libc and Fios2 in
+    # sce_module. Settings (frame pacing, red zones, resolution patches) still to be measured.
+    'CUSA00038': {'name': 'RESOGUN', 'modules': ('libc.prx', 'libSceFios2.prx')},
 }
 DEFAULT = {'name': None, 'modules': ('libc.prx', 'libSceFios2.prx')}
 
