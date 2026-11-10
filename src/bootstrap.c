@@ -140,6 +140,12 @@ static int scan_one(void *ctx, const char *name) {
         printf("PKG %s skipped: %s\n", name, err);
         return 0;
     }
+    /* PKGs of other games in the same folder are left alone. */
+    if (!strstr(f->info.title, "RESOGUN") && !strstr(f->info.title, "Resogun") && strcmp(f->info.title_id, "CUSA00038") &&
+        strcmp(f->info.title_id, "CUSA00039")) {
+        printf("PKG %s skipped: another game (%s, %s)\n", name, f->info.title_id, f->info.title);
+        return 0;
+    }
     if (strcmp(f->info.category, "gd") && strcmp(f->info.category, "gp")) {
         printf("PKG %s skipped: category %s (not the game or an update)\n", name, f->info.category);
         return 0;
